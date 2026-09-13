@@ -15,7 +15,15 @@ from app.core.security import hash_password
 from app.db.session import get_db
 from app.main import app
 from app.models.cart import Cart, CartItem
-from app.models.catalog import Category, Inventory, InventoryTransaction, Product
+from app.models.catalog import (
+    Category,
+    Inventory,
+    InventoryTransaction,
+    Product,
+    ProductImage,
+    ProductVariant,
+)
+from app.models.engagement import Favorite, ProductView, SearchHistory
 from app.models.enums import (
     CartStatus,
     CategoryStatus,
@@ -283,6 +291,122 @@ def test_customer_browse_cart_checkout_and_idempotent_payment(
         assert inventory is not None and inventory.quantity == 3
         assert order_item is not None and order_item.unit_price == Decimal("49.90")
         assert payment_count == 1
+
+
+@pytest.mark.integration
+def test_images_favorites_views_search_history_and_variant_checkout(
+    api_client: TestClient,
+    test_engine: Engine,
+) -> None:
+    product_id, _ = create_catalog(
+        test_engine,
+        stock=6,
+        price=Decimal("199.00"),
+        name="Coral Wireless Headphones",
+    )
+    with Session(test_engine) as session:
+        session.add(
+            ProductImage(
+                product_id=product_id,
+                url="/images/products/digital.webp",
+                alt_text="Wireless headphones",
+                sort_order=0,
+                is_primary=True,
+            )
+        )
+        variant = ProductVariant(
+            product_id=product_id,
+            sku="HEADPHONE-CORAL",
+            name="珊瑚橙",
+            attributes={"颜色": "珊瑚橙"},
+            price=Decimal("219.00"),
+            status="ACTIVE",
+            sort_order=0,
+        )
+        session.add(variant)
+        session.commit()
+        variant_id = variant.id
+
+    user_id, email, password = create_customer(test_engine)
+    token = login(api_client, email, password)
+
+    suggestions = api_client.get(
+        "/api/products/suggestions",
+        params={"keyword": "Wireless"},
+    )
+    assert suggestions.status_code == 200
+    assert "Coral Wireless Headphones" in suggestions.json()
+
+    search = api_client.get(
+        "/api/products",
+        params={"keyword": "Headphones"},
+        headers=auth(token),
+    )
+    assert search.status_code == 200
+    assert search.json()["items"][0]["images"][0]["url"].endswith("digital.webp")
+    assert search.json()["items"][0]["has_variants"] is True
+
+    detail = api_client.get(f"/api/products/{product_id}", headers=auth(token))
+    assert detail.status_code == 200
+    assert detail.json()["variants"][0]["id"] == variant_id
+    api_client.get(f"/api/products/{product_id}", headers=auth(token))
+
+    favorite = api_client.post(f"/api/favorites/{product_id}", headers=auth(token))
+    assert favorite.status_code == 200
+    assert favorite.json()["is_favorite"] is True
+    assert api_client.get("/api/favorites/ids", headers=auth(token)).json() == [product_id]
+    favorites = api_client.get("/api/favorites", headers=auth(token))
+    assert favorites.status_code == 200
+    assert favorites.json()[0]["is_favorite"] is True
+    assert api_client.get("/api/history/views", headers=auth(token)).json()[0]["id"] == product_id
+
+    cart = api_client.post(
+        "/api/cart/items",
+        headers=auth(token),
+        json={"product_id": product_id, "variant_id": variant_id, "quantity": 2},
+    )
+    assert cart.status_code == 201
+    assert cart.json()["items"][0]["variant_name"] == "珊瑚橙"
+    assert cart.json()["total_amount"] == "438.00"
+
+    with Session(test_engine) as session:
+        address_id = session.scalar(select(Address.id).where(Address.user_id == user_id))
+    checkout = api_client.post(
+        "/api/checkout",
+        headers=auth(token),
+        json={
+            "address_id": address_id,
+            "payment_method": "MOCK_CARD",
+            "idempotency_key": f"variant-{uuid4().hex}",
+        },
+    )
+    assert checkout.status_code == 201
+    assert checkout.json()["items"][0]["variant_name_snapshot"] == "珊瑚橙"
+    assert checkout.json()["items"][0]["variant_sku_snapshot"] == "HEADPHONE-CORAL"
+
+    removed = api_client.delete(f"/api/favorites/{product_id}", headers=auth(token))
+    assert removed.status_code == 200
+    assert removed.json()["is_favorite"] is False
+
+    with Session(test_engine) as session:
+        history = session.scalar(
+            select(SearchHistory).where(
+                SearchHistory.user_id == user_id,
+                SearchHistory.normalized_keyword == "headphones",
+            )
+        )
+        view = session.scalar(
+            select(ProductView).where(
+                ProductView.user_id == user_id,
+                ProductView.product_id == product_id,
+            )
+        )
+        favorite_count = session.scalar(
+            select(func.count(Favorite.id)).where(Favorite.user_id == user_id)
+        )
+        assert history is not None and history.search_count == 1
+        assert view is not None and view.view_count == 2
+        assert favorite_count == 0
 
 
 @pytest.mark.integration

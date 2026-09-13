@@ -32,11 +32,20 @@ class CartRepository:
         )
         return self.session.scalar(statement)
 
-    def get_item_by_product(self, cart_id: int, product_id: int) -> CartItem | None:
+    def get_item_by_product(
+        self,
+        cart_id: int,
+        product_id: int,
+        variant_id: int | None,
+    ) -> CartItem | None:
         statement = select(CartItem).where(
             CartItem.cart_id == cart_id,
             CartItem.product_id == product_id,
         )
+        if variant_id is None:
+            statement = statement.where(CartItem.variant_id.is_(None))
+        else:
+            statement = statement.where(CartItem.variant_id == variant_id)
         return self.session.scalar(statement)
 
 

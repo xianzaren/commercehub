@@ -11,7 +11,15 @@ from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.session import build_engine
 from app.models.audit import AuditLog
-from app.models.catalog import Category, Inventory, InventoryTransaction, Product, ProductPrice
+from app.models.catalog import (
+    Category,
+    Inventory,
+    InventoryTransaction,
+    Product,
+    ProductImage,
+    ProductPrice,
+    ProductVariant,
+)
 from app.models.enums import (
     CategoryStatus,
     InventoryTransactionType,
@@ -124,6 +132,51 @@ def get_or_create_product(
         product.status = status
         product.deleted_at = None
     return product
+
+
+def ensure_product_image(session: Session, product: Product, url: str) -> None:
+    image = session.scalar(
+        select(ProductImage).where(
+            ProductImage.product_id == product.id,
+            ProductImage.sort_order == 0,
+        )
+    )
+    if image is None:
+        image = ProductImage(
+            product_id=product.id,
+            url=url,
+            alt_text=f"{product.name}商品展示图",
+            sort_order=0,
+            is_primary=True,
+        )
+        session.add(image)
+    else:
+        image.url = url
+        image.alt_text = f"{product.name}商品展示图"
+        image.is_primary = True
+
+
+def ensure_product_variants(
+    session: Session,
+    product: Product,
+    variants: list[tuple[str, str, dict[str, str], Decimal]],
+) -> None:
+    for sort_order, (sku_suffix, name, attributes, price) in enumerate(variants):
+        sku = f"{product.sku}-{sku_suffix}"
+        variant = session.scalar(
+            select(ProductVariant).where(
+                ProductVariant.product_id == product.id,
+                ProductVariant.sku == sku,
+            )
+        )
+        if variant is None:
+            variant = ProductVariant(product_id=product.id, sku=sku)
+            session.add(variant)
+        variant.name = name
+        variant.attributes = attributes
+        variant.price = price
+        variant.status = "ACTIVE"
+        variant.sort_order = sort_order
 
 
 def ensure_address(session: Session, user: User, recipient: str, phone: str) -> Address:
@@ -340,24 +393,14 @@ def seed() -> dict[str, int]:
                 if legacy_user is not None and current_user is None:
                     legacy_user.email = new_email
 
-            admin = get_or_create_user(
-                session, "admin@commercehub.example.com", UserRole.ADMIN
-            )
+            admin = get_or_create_user(session, "admin@commercehub.example.com", UserRole.ADMIN)
             customers = [
-                get_or_create_user(
-                    session, "customer1@commercehub.example.com", UserRole.CUSTOMER
-                ),
-                get_or_create_user(
-                    session, "customer2@commercehub.example.com", UserRole.CUSTOMER
-                ),
+                get_or_create_user(session, "customer1@commercehub.example.com", UserRole.CUSTOMER),
+                get_or_create_user(session, "customer2@commercehub.example.com", UserRole.CUSTOMER),
             ]
             merchant_users = [
-                get_or_create_user(
-                    session, "merchant1@commercehub.example.com", UserRole.MERCHANT
-                ),
-                get_or_create_user(
-                    session, "merchant2@commercehub.example.com", UserRole.MERCHANT
-                ),
+                get_or_create_user(session, "merchant1@commercehub.example.com", UserRole.MERCHANT),
+                get_or_create_user(session, "merchant2@commercehub.example.com", UserRole.MERCHANT),
             ]
             ensure_address(session, customers[0], "陈晨", "13800138000")
             ensure_address(session, customers[1], "林晓", "13900139000")
@@ -629,44 +672,386 @@ def seed() -> dict[str, int]:
                     4,
                     ProductStatus.DRAFT,
                 ),
-                (0, 0, "NEB-BAND-013", "轻量智能手环", "睡眠监测与十四天续航", "199.00", 32, ProductStatus.ACTIVE),
-                (0, 0, "NEB-CHARGE-014", "65W 氮化镓充电器", "双 USB-C 接口便携快充", "169.00", 26, ProductStatus.ACTIVE),
-                (0, 0, "NEB-SPEAKER-015", "桌面蓝牙音箱", "立体声与氛围灯效", "259.00", 14, ProductStatus.ACTIVE),
-                (0, 0, "NEB-POWER-016", "磁吸无线充电宝", "10000mAh 双向快充", "189.00", 19, ProductStatus.ACTIVE),
-                (0, 0, "NEB-ROUTER-017", "Wi-Fi 6 千兆路由器", "双频覆盖与游戏加速", "299.00", 10, ProductStatus.ACTIVE),
-                (1, 7, "SEA-JUICER-013", "便携榨汁杯", "六叶刀头与随行杯设计", "129.00", 23, ProductStatus.ACTIVE),
-                (1, 7, "SEA-FAN-014", "空气循环扇", "四档风速与低噪送风", "239.00", 13, ProductStatus.ACTIVE),
-                (1, 7, "SEA-KETTLE-015", "恒温电热水壶", "五档温控与食品级内胆", "179.00", 18, ProductStatus.ACTIVE),
-                (1, 7, "SEA-HUMID-016", "桌面加湿器", "静音雾化与缺水断电", "89.00", 27, ProductStatus.ACTIVE),
-                (1, 3, "SEA-NUT-017", "每日坚果组合 30 袋", "独立包装与低温烘焙", "119.00", 40, ProductStatus.ACTIVE),
-                (1, 3, "SEA-OAT-018", "无糖燕麦饼干", "全谷物烘焙 600g", "39.90", 35, ProductStatus.ACTIVE),
-                (1, 3, "SEA-HONEY-019", "蜂蜜柚子茶", "清新果香 500g", "49.90", 21, ProductStatus.ACTIVE),
-                (1, 3, "SEA-SAUCE-020", "意式番茄肉酱", "加热即食 200g×3", "56.00", 16, ProductStatus.ACTIVE),
-                (1, 5, "SEA-MASK-021", "玻尿酸保湿面膜", "清爽补水 20 片", "69.00", 31, ProductStatus.ACTIVE),
-                (1, 5, "SEA-TOOTH-022", "便携电动牙刷", "声波清洁与旅行收纳", "149.00", 12, ProductStatus.ACTIVE),
-                (1, 5, "SEA-HAND-023", "香氛护手霜礼盒", "三种香型滋润不粘腻", "79.00", 24, ProductStatus.ACTIVE),
-                (1, 6, "SEA-TSHIRT-024", "纯棉基础款 T 恤", "宽松剪裁与柔软亲肤面料", "79.00", 38, ProductStatus.ACTIVE),
-                (1, 6, "SEA-TOTE-025", "通勤帆布托特包", "多分区收纳与加固肩带", "99.00", 29, ProductStatus.ACTIVE),
-                (1, 6, "SEA-SHOES-026", "轻量缓震跑步鞋", "透气网面与耐磨鞋底", "269.00", 20, ProductStatus.ACTIVE),
-                (1, 8, "SEA-TISSUE-027", "婴儿棉柔巾 6 包", "干湿两用无香配方", "59.00", 45, ProductStatus.ACTIVE),
-                (1, 8, "SEA-LUNCH-028", "儿童保温餐盒", "分格密封与便携提手", "139.00", 15, ProductStatus.ACTIVE),
-                (1, 9, "SEA-CATLIT-029", "低尘膨润土猫砂", "快速结团 10kg", "49.00", 34, ProductStatus.ACTIVE),
-                (1, 9, "SEA-FOUNTAIN-030", "宠物智能饮水机", "循环过滤与低水位提醒", "159.00", 11, ProductStatus.ACTIVE),
-                (0, 0, "NEB-STAND-018", "折叠磁吸手机支架", "多角度调节与稳固磁吸", "69.00", 36, ProductStatus.ACTIVE),
-                (0, 0, "NEB-MONITOR-019", "27 英寸 4K 显示器", "IPS 广色域与升降旋转支架", "1699.00", 9, ProductStatus.ACTIVE),
-                (0, 0, "NEB-COMBO-020", "便携无线键鼠套装", "轻薄静音与双模连接", "159.00", 22, ProductStatus.ACTIVE),
-                (1, 1, "SEA-BEDDING-031", "水洗棉四件套", "柔软亲肤，适合四季使用", "299.00", 17, ProductStatus.ACTIVE),
-                (1, 1, "SEA-LAMP-032", "原木落地阅读灯", "无频闪暖光与脚踏开关", "269.00", 12, ProductStatus.ACTIVE),
-                (1, 1, "SEA-RACK-033", "免打孔厨房置物架", "加厚碳钢与灵活分层收纳", "89.00", 28, ProductStatus.ACTIVE),
-                (1, 2, "SEA-BAND-034", "五档健身弹力带", "居家塑形与便携收纳", "49.00", 42, ProductStatus.ACTIVE),
-                (1, 2, "SEA-PICNIC-035", "防潮加厚野餐垫", "可折叠提手与防水底层", "109.00", 25, ProductStatus.ACTIVE),
-                (1, 2, "SEA-CAMP-036", "充电式露营灯", "三档调光与应急充电", "129.00", 18, ProductStatus.ACTIVE),
-                (1, 3, "SEA-STRAW-037", "冻干草莓脆 6 袋", "无添加蔗糖，保留自然果香", "45.90", 33, ProductStatus.ACTIVE),
-                (1, 3, "SEA-CHOCO-038", "黑巧克力礼盒", "72% 可可含量，独立包装", "69.00", 27, ProductStatus.ACTIVE),
-                (1, 3, "SEA-OOLONG-039", "桂花乌龙茶 20 包", "原叶三角茶包，清香回甘", "58.00", 31, ProductStatus.ACTIVE),
-                (0, 4, "NEB-PYBOOK-021", "Python 数据分析实战", "从数据清洗到可视化的项目案例", "99.00", 16, ProductStatus.ACTIVE),
-                (1, 4, "SEA-JOURNAL-040", "城市旅行手账", "地图页与行程记录模板", "49.00", 24, ProductStatus.ACTIVE),
-                (1, 9, "SEA-SCRATCH-041", "瓦楞纸猫抓板", "加厚耐抓与猫薄荷夹层", "39.90", 39, ProductStatus.ACTIVE),
+                (
+                    0,
+                    0,
+                    "NEB-BAND-013",
+                    "轻量智能手环",
+                    "睡眠监测与十四天续航",
+                    "199.00",
+                    32,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-CHARGE-014",
+                    "65W 氮化镓充电器",
+                    "双 USB-C 接口便携快充",
+                    "169.00",
+                    26,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-SPEAKER-015",
+                    "桌面蓝牙音箱",
+                    "立体声与氛围灯效",
+                    "259.00",
+                    14,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-POWER-016",
+                    "磁吸无线充电宝",
+                    "10000mAh 双向快充",
+                    "189.00",
+                    19,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-ROUTER-017",
+                    "Wi-Fi 6 千兆路由器",
+                    "双频覆盖与游戏加速",
+                    "299.00",
+                    10,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    7,
+                    "SEA-JUICER-013",
+                    "便携榨汁杯",
+                    "六叶刀头与随行杯设计",
+                    "129.00",
+                    23,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    7,
+                    "SEA-FAN-014",
+                    "空气循环扇",
+                    "四档风速与低噪送风",
+                    "239.00",
+                    13,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    7,
+                    "SEA-KETTLE-015",
+                    "恒温电热水壶",
+                    "五档温控与食品级内胆",
+                    "179.00",
+                    18,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    7,
+                    "SEA-HUMID-016",
+                    "桌面加湿器",
+                    "静音雾化与缺水断电",
+                    "89.00",
+                    27,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-NUT-017",
+                    "每日坚果组合 30 袋",
+                    "独立包装与低温烘焙",
+                    "119.00",
+                    40,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-OAT-018",
+                    "无糖燕麦饼干",
+                    "全谷物烘焙 600g",
+                    "39.90",
+                    35,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-HONEY-019",
+                    "蜂蜜柚子茶",
+                    "清新果香 500g",
+                    "49.90",
+                    21,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-SAUCE-020",
+                    "意式番茄肉酱",
+                    "加热即食 200g×3",
+                    "56.00",
+                    16,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    5,
+                    "SEA-MASK-021",
+                    "玻尿酸保湿面膜",
+                    "清爽补水 20 片",
+                    "69.00",
+                    31,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    5,
+                    "SEA-TOOTH-022",
+                    "便携电动牙刷",
+                    "声波清洁与旅行收纳",
+                    "149.00",
+                    12,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    5,
+                    "SEA-HAND-023",
+                    "香氛护手霜礼盒",
+                    "三种香型滋润不粘腻",
+                    "79.00",
+                    24,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    6,
+                    "SEA-TSHIRT-024",
+                    "纯棉基础款 T 恤",
+                    "宽松剪裁与柔软亲肤面料",
+                    "79.00",
+                    38,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    6,
+                    "SEA-TOTE-025",
+                    "通勤帆布托特包",
+                    "多分区收纳与加固肩带",
+                    "99.00",
+                    29,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    6,
+                    "SEA-SHOES-026",
+                    "轻量缓震跑步鞋",
+                    "透气网面与耐磨鞋底",
+                    "269.00",
+                    20,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    8,
+                    "SEA-TISSUE-027",
+                    "婴儿棉柔巾 6 包",
+                    "干湿两用无香配方",
+                    "59.00",
+                    45,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    8,
+                    "SEA-LUNCH-028",
+                    "儿童保温餐盒",
+                    "分格密封与便携提手",
+                    "139.00",
+                    15,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    9,
+                    "SEA-CATLIT-029",
+                    "低尘膨润土猫砂",
+                    "快速结团 10kg",
+                    "49.00",
+                    34,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    9,
+                    "SEA-FOUNTAIN-030",
+                    "宠物智能饮水机",
+                    "循环过滤与低水位提醒",
+                    "159.00",
+                    11,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-STAND-018",
+                    "折叠磁吸手机支架",
+                    "多角度调节与稳固磁吸",
+                    "69.00",
+                    36,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-MONITOR-019",
+                    "27 英寸 4K 显示器",
+                    "IPS 广色域与升降旋转支架",
+                    "1699.00",
+                    9,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    0,
+                    "NEB-COMBO-020",
+                    "便携无线键鼠套装",
+                    "轻薄静音与双模连接",
+                    "159.00",
+                    22,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    1,
+                    "SEA-BEDDING-031",
+                    "水洗棉四件套",
+                    "柔软亲肤，适合四季使用",
+                    "299.00",
+                    17,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    1,
+                    "SEA-LAMP-032",
+                    "原木落地阅读灯",
+                    "无频闪暖光与脚踏开关",
+                    "269.00",
+                    12,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    1,
+                    "SEA-RACK-033",
+                    "免打孔厨房置物架",
+                    "加厚碳钢与灵活分层收纳",
+                    "89.00",
+                    28,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    2,
+                    "SEA-BAND-034",
+                    "五档健身弹力带",
+                    "居家塑形与便携收纳",
+                    "49.00",
+                    42,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    2,
+                    "SEA-PICNIC-035",
+                    "防潮加厚野餐垫",
+                    "可折叠提手与防水底层",
+                    "109.00",
+                    25,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    2,
+                    "SEA-CAMP-036",
+                    "充电式露营灯",
+                    "三档调光与应急充电",
+                    "129.00",
+                    18,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-STRAW-037",
+                    "冻干草莓脆 6 袋",
+                    "无添加蔗糖，保留自然果香",
+                    "45.90",
+                    33,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-CHOCO-038",
+                    "黑巧克力礼盒",
+                    "72% 可可含量，独立包装",
+                    "69.00",
+                    27,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    3,
+                    "SEA-OOLONG-039",
+                    "桂花乌龙茶 20 包",
+                    "原叶三角茶包，清香回甘",
+                    "58.00",
+                    31,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    0,
+                    4,
+                    "NEB-PYBOOK-021",
+                    "Python 数据分析实战",
+                    "从数据清洗到可视化的项目案例",
+                    "99.00",
+                    16,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    4,
+                    "SEA-JOURNAL-040",
+                    "城市旅行手账",
+                    "地图页与行程记录模板",
+                    "49.00",
+                    24,
+                    ProductStatus.ACTIVE,
+                ),
+                (
+                    1,
+                    9,
+                    "SEA-SCRATCH-041",
+                    "瓦楞纸猫抓板",
+                    "加厚耐抓与猫薄荷夹层",
+                    "39.90",
+                    39,
+                    ProductStatus.ACTIVE,
+                ),
             ]
             product_tags = {
                 "NEB-KB-001": ["热卖", "三模连接", "包邮"],
@@ -738,6 +1123,112 @@ def seed() -> dict[str, int]:
                     product_status,
                 )
                 products_with_stock.append((product, stock))
+
+            category_image_names = [
+                "digital",
+                "home",
+                "sport",
+                "food",
+                "books",
+                "care",
+                "fashion",
+                "appliance",
+                "baby",
+                "pet",
+            ]
+            for index, (product, _) in enumerate(products_with_stock):
+                category_index = product_specs[index][1]
+                ensure_product_image(
+                    session,
+                    product,
+                    f"/images/products/{category_image_names[category_index]}.webp",
+                )
+
+            variant_specs = {
+                "NEB-KB-001": [
+                    (
+                        "CORAL",
+                        "珊瑚橙轴",
+                        {"颜色": "暖白珊瑚", "轴体": "线性轴"},
+                        Decimal("399.00"),
+                    ),
+                    (
+                        "CREAM",
+                        "奶油白茶轴",
+                        {"颜色": "奶油白", "轴体": "段落轴"},
+                        Decimal("419.00"),
+                    ),
+                ],
+                "NEB-MS-002": [
+                    ("WHITE", "云朵白", {"颜色": "云朵白"}, Decimal("129.00")),
+                    ("PINK", "柔雾粉", {"颜色": "柔雾粉"}, Decimal("139.00")),
+                ],
+                "NEB-SSD-005": [
+                    ("1TB", "1TB 标准版", {"容量": "1TB"}, Decimal("599.00")),
+                    ("2TB", "2TB 大容量版", {"容量": "2TB"}, Decimal("999.00")),
+                ],
+                "NEB-MONITOR-019": [
+                    (
+                        "27-4K",
+                        "27 英寸 4K",
+                        {"尺寸": "27 英寸", "分辨率": "4K"},
+                        Decimal("1699.00"),
+                    ),
+                    (
+                        "32-4K",
+                        "32 英寸 4K",
+                        {"尺寸": "32 英寸", "分辨率": "4K"},
+                        Decimal("2199.00"),
+                    ),
+                ],
+                "SEA-CUP-001": [
+                    (
+                        "CREAM",
+                        "奶油白 500ml",
+                        {"颜色": "奶油白", "容量": "500ml"},
+                        Decimal("159.00"),
+                    ),
+                    (
+                        "CORAL",
+                        "珊瑚橙 500ml",
+                        {"颜色": "珊瑚橙", "容量": "500ml"},
+                        Decimal("159.00"),
+                    ),
+                ],
+                "SEA-PILLOW-002": [
+                    ("LOW", "低枕 8cm", {"高度": "8cm"}, Decimal("209.00")),
+                    ("HIGH", "高枕 11cm", {"高度": "11cm"}, Decimal("219.00")),
+                ],
+                "SEA-BAG-003": [
+                    ("GREEN", "苔藓绿 28L", {"颜色": "苔藓绿", "容量": "28L"}, Decimal("359.00")),
+                    ("BLACK", "曜石黑 28L", {"颜色": "曜石黑", "容量": "28L"}, Decimal("359.00")),
+                ],
+                "SEA-COFFEE-005": [
+                    ("NUT", "坚果风味", {"风味": "坚果可可"}, Decimal("68.00")),
+                    ("FRUIT", "花果风味", {"风味": "柑橘花香"}, Decimal("72.00")),
+                ],
+                "SEA-MASK-021": [
+                    ("10", "10 片体验装", {"数量": "10 片"}, Decimal("39.00")),
+                    ("20", "20 片家庭装", {"数量": "20 片"}, Decimal("69.00")),
+                ],
+                "SEA-TSHIRT-024": [
+                    ("M", "暖白 M 码", {"颜色": "暖白", "尺码": "M"}, Decimal("79.00")),
+                    ("L", "暖白 L 码", {"颜色": "暖白", "尺码": "L"}, Decimal("79.00")),
+                    ("XL", "珊瑚橙 XL 码", {"颜色": "珊瑚橙", "尺码": "XL"}, Decimal("85.00")),
+                ],
+                "SEA-SHOES-026": [
+                    ("39", "米白 39 码", {"颜色": "米白", "尺码": "39"}, Decimal("269.00")),
+                    ("41", "米白 41 码", {"颜色": "米白", "尺码": "41"}, Decimal("269.00")),
+                    ("43", "珊瑚橙 43 码", {"颜色": "珊瑚橙", "尺码": "43"}, Decimal("279.00")),
+                ],
+                "SEA-CATLIT-029": [
+                    ("5KG", "5kg 轻量装", {"重量": "5kg"}, Decimal("29.00")),
+                    ("10KG", "10kg 实惠装", {"重量": "10kg"}, Decimal("49.00")),
+                ],
+            }
+            for product, _ in products_with_stock:
+                if product.sku in variant_specs:
+                    ensure_product_variants(session, product, variant_specs[product.sku])
 
             for product, _ in products_with_stock[:6]:
                 history = session.scalar(

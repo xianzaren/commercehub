@@ -58,6 +58,29 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def get_optional_user(
+    request: Request,
+    credentials: BearerCredentials,
+    session: DatabaseSession,
+    settings: AppSettings,
+) -> User | None:
+    token = credentials.credentials if credentials is not None else None
+    token = token or request.cookies.get(settings.auth_cookie_name)
+    if token is None:
+        return None
+    try:
+        claims = decode_access_token(token, settings)
+    except AccessTokenError:
+        return None
+    user = UserRepository(session).get(claims.user_id)
+    if user is None or user.status != UserStatus.ACTIVE or user.role != claims.role:
+        return None
+    return user
+
+
+OptionalCurrentUser = Annotated[User | None, Depends(get_optional_user)]
+
+
 def require_roles(*allowed_roles: UserRole) -> Callable[[CurrentUser], User]:
     def dependency(user: CurrentUser) -> User:
         if user.role not in allowed_roles:

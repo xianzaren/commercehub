@@ -29,6 +29,16 @@ export type Product = {
   current_price: string;
   inventory_quantity: number;
   sales_count: number;
+  images: Array<{ url: string; alt_text: string; is_primary: boolean }>;
+  variants: Array<{
+    id: number;
+    sku: string;
+    name: string;
+    attributes: Record<string, string>;
+    price: string;
+  }>;
+  has_variants: boolean;
+  is_favorite: boolean;
   status?: string;
   created_at?: string;
 };
@@ -46,6 +56,8 @@ export type Order = {
     id: number;
     product_id: number;
     product_name_snapshot: string;
+    variant_name_snapshot?: string | null;
+    variant_sku_snapshot?: string | null;
     sku_snapshot: string;
     unit_price: string;
     quantity: number;

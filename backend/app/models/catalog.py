@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -59,6 +59,49 @@ class Product(TimestampMixin, Base):
     current_price: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default=ProductStatus.DRAFT, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(UTC_DATETIME, nullable=True)
+
+
+class ProductImage(TimestampMixin, Base):
+    __tablename__ = "product_images"
+    __table_args__ = (
+        CheckConstraint("sort_order >= 0", name="nonnegative_sort_order"),
+        Index("ix_product_images_product_sort", "product_id", "sort_order", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT_UNSIGNED, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    alt_text: Mapped[str] = mapped_column(String(200), nullable=False)
+    sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class ProductVariant(TimestampMixin, Base):
+    __tablename__ = "product_variants"
+    __table_args__ = (
+        CheckConstraint("price > 0", name="positive_price"),
+        CheckConstraint("status IN ('ACTIVE','INACTIVE')", name="valid_status"),
+        CheckConstraint("sort_order >= 0", name="nonnegative_sort_order"),
+        Index("uq_product_variants_product_sku", "product_id", "sku", unique=True),
+        Index("ix_product_variants_product_status", "product_id", "status", "sort_order"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT_UNSIGNED, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    attributes: Mapped[dict[str, str]] = mapped_column(JSON, default=dict, nullable=False)
+    price: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", nullable=False)
+    sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
 
 
 class ProductPrice(Base):

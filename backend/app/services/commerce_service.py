@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -7,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import BusinessError
 from app.models.cart import Cart, CartItem
-from app.models.catalog import Inventory, InventoryTransaction, Product
+from app.models.catalog import (
+    Inventory,
+    InventoryTransaction,
+    Product,
+    ProductImage,
+    ProductVariant,
+)
 from app.models.enums import (
     CartStatus,
     InventoryTransactionType,
@@ -17,10 +24,12 @@ from app.models.enums import (
     PaymentStatus,
     ProductStatus,
     StoreStatus,
+    UserRole,
 )
 from app.models.order import Address, Order, OrderItem, Payment
 from app.models.user import User
 from app.repositories.commerce_repository import AddressRepository, CartRepository, OrderRepository
+from app.repositories.engagement_repository import EngagementRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.merchant_repository import StoreRepository
 from app.repositories.product_repository import CategoryRepository, ProductRepository
@@ -28,6 +37,19 @@ from app.repositories.product_repository import CategoryRepository, ProductRepos
 
 def utcnow() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+@dataclass(slots=True)
+class ProductDetails:
+    product: Product
+    inventory: Inventory
+    category_name: str
+    store_name: str
+    sales_count: int
+    primary_image_url: str | None
+    images: list[ProductImage]
+    variants: list[ProductVariant]
+    has_variants: bool
 
 
 class ProductBrowseService:
@@ -47,8 +69,8 @@ class ProductBrowseService:
         sort: str,
         offset: int,
         limit: int,
-    ) -> tuple[list[tuple[Product, Inventory, str, str, int]], int]:
-        return self.products.search_active(
+    ) -> tuple[list[ProductDetails], int]:
+        rows, total = self.products.search_active(
             keyword=keyword,
             category_id=category_id,
             min_price=min_price,
@@ -57,6 +79,28 @@ class ProductBrowseService:
             offset=offset,
             limit=limit,
         )
+        return [
+            ProductDetails(
+                product=product,
+                inventory=inventory,
+                category_name=category_name,
+                store_name=store_name,
+                sales_count=sales_count,
+                primary_image_url=primary_image_url,
+                images=[],
+                variants=[],
+                has_variants=has_variants,
+            )
+            for (
+                product,
+                inventory,
+                category_name,
+                store_name,
+                sales_count,
+                primary_image_url,
+                has_variants,
+            ) in rows
+        ], total
 
     def get_active(self, product_id: int) -> tuple[Product, Inventory]:
         product = self.products.get(product_id)
@@ -70,13 +114,84 @@ class ProductBrowseService:
             raise BusinessError("INVENTORY_NOT_FOUND", "库存记录不存在", status_code=409)
         return product, inventory
 
-    def get_active_details(self, product_id: int) -> tuple[Product, Inventory, str, str, int]:
+    def get_active_details(self, product_id: int) -> ProductDetails:
         product, inventory = self.get_active(product_id)
         category = self.categories.get(product.category_id)
         store = self.stores.get(product.store_id)
         if category is None or store is None:
             raise BusinessError("PRODUCT_NOT_FOUND", "商品不存在或不可售", status_code=404)
-        return product, inventory, category.name, store.name, self.products.sales_count(product.id)
+        images = self.products.list_images(product.id)
+        return ProductDetails(
+            product=product,
+            inventory=inventory,
+            category_name=category.name,
+            store_name=store.name,
+            sales_count=self.products.sales_count(product.id),
+            primary_image_url=images[0].url if images else None,
+            images=images,
+            variants=(variants := self.products.list_variants(product.id)),
+            has_variants=bool(variants),
+        )
+
+    def get_active_variant(self, product_id: int, variant_id: int | None) -> ProductVariant | None:
+        variants = self.products.list_variants(product_id)
+        if variant_id is None:
+            if variants:
+                raise BusinessError("VARIANT_REQUIRED", "请选择商品规格", status_code=422)
+            return None
+        variant = self.products.get_variant(product_id, variant_id)
+        if variant is None:
+            raise BusinessError("VARIANT_NOT_FOUND", "商品规格不存在或不可售", status_code=404)
+        return variant
+
+    def suggest(self, keyword: str, limit: int = 8) -> list[str]:
+        return self.products.suggest(keyword, limit=limit)
+
+    def get_many(self, product_ids: list[int]) -> list[ProductDetails]:
+        items = []
+        for product_id in product_ids:
+            try:
+                items.append(self.get_active_details(product_id))
+            except BusinessError:
+                continue
+        return items
+
+
+class EngagementService:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.engagement = EngagementRepository(session)
+        self.products = ProductBrowseService(session)
+
+    def record_search(self, user: User | None, keyword: str | None, result_count: int) -> None:
+        if user is None or user.role != UserRole.CUSTOMER or not keyword or not keyword.strip():
+            return
+        self.engagement.record_search(user.id, keyword, result_count)
+        self.session.commit()
+
+    def record_view(self, user: User | None, product_id: int) -> None:
+        if user is None or user.role != UserRole.CUSTOMER:
+            return
+        self.engagement.record_view(user.id, product_id)
+        self.session.commit()
+
+    def add_favorite(self, user: User, product_id: int) -> None:
+        self.products.get_active(product_id)
+        self.engagement.add_favorite(user.id, product_id)
+        self.session.commit()
+
+    def delete_favorite(self, user: User, product_id: int) -> None:
+        self.engagement.delete_favorite(user.id, product_id)
+        self.session.commit()
+
+    def favorite_ids(self, user: User) -> list[int]:
+        return self.engagement.favorite_ids(user.id)
+
+    def favorites(self, user: User) -> list[ProductDetails]:
+        return self.products.get_many(self.engagement.favorite_ids(user.id))
+
+    def viewed_products(self, user: User) -> list[ProductDetails]:
+        return self.products.get_many(self.engagement.viewed_product_ids(user.id))
 
 
 class CartService:
@@ -85,14 +200,24 @@ class CartService:
         self.carts = CartRepository(session)
         self.products = ProductBrowseService(session)
 
-    def get(self, user: User) -> tuple[Cart | None, list[tuple[CartItem, Product, Inventory]]]:
+    def get(
+        self,
+        user: User,
+    ) -> tuple[Cart | None, list[tuple[CartItem, Product, Inventory, ProductVariant | None]]]:
         cart = self.carts.get_active(user.id)
         if cart is None:
             return None, []
         return cart, self._item_details(cart)
 
-    def add_item(self, user: User, product_id: int, quantity: int) -> Cart:
+    def add_item(
+        self,
+        user: User,
+        product_id: int,
+        quantity: int,
+        variant_id: int | None = None,
+    ) -> Cart:
         product, inventory = self.products.get_active(product_id)
+        variant = self.products.get_active_variant(product.id, variant_id)
         cart = self._get_or_create_cart(user.id)
         if cart.store_id is not None and cart.store_id != product.store_id:
             raise BusinessError(
@@ -100,13 +225,25 @@ class CartService:
                 "一个购物车只能包含同一店铺的商品，请先结算或清空购物车",
                 status_code=409,
             )
-        item = self.carts.get_item_by_product(cart.id, product.id)
+        item = self.carts.get_item_by_product(cart.id, product.id, variant.id if variant else None)
         requested_quantity = quantity + (item.quantity if item is not None else 0)
-        if requested_quantity > inventory.quantity:
+        other_quantity = sum(
+            existing.quantity
+            for existing in self.carts.list_items(cart.id)
+            if existing.product_id == product.id and (item is None or existing.id != item.id)
+        )
+        if requested_quantity + other_quantity > inventory.quantity:
             raise BusinessError("INSUFFICIENT_STOCK", "商品库存不足", status_code=409)
         cart.store_id = product.store_id
         if item is None:
-            self.session.add(CartItem(cart_id=cart.id, product_id=product.id, quantity=quantity))
+            self.session.add(
+                CartItem(
+                    cart_id=cart.id,
+                    product_id=product.id,
+                    variant_id=variant.id if variant else None,
+                    quantity=quantity,
+                )
+            )
         else:
             item.quantity = requested_quantity
         self.session.commit()
@@ -121,7 +258,12 @@ class CartService:
         if item is None:
             raise BusinessError("CART_ITEM_NOT_FOUND", "购物车商品不存在", status_code=404)
         _, inventory = self.products.get_active(item.product_id)
-        if quantity > inventory.quantity:
+        other_quantity = sum(
+            existing.quantity
+            for existing in self.carts.list_items(cart.id)
+            if existing.product_id == item.product_id and existing.id != item.id
+        )
+        if quantity + other_quantity > inventory.quantity:
             raise BusinessError("INSUFFICIENT_STOCK", "商品库存不足", status_code=409)
         item.quantity = quantity
         self.session.commit()
@@ -159,13 +301,21 @@ class CartService:
             return existing
         return cart
 
-    def _item_details(self, cart: Cart) -> list[tuple[CartItem, Product, Inventory]]:
+    def _item_details(
+        self,
+        cart: Cart,
+    ) -> list[tuple[CartItem, Product, Inventory, ProductVariant | None]]:
         details = []
         for item in self.carts.list_items(cart.id):
             product = ProductRepository(self.session).get(item.product_id)
             inventory = InventoryRepository(self.session).get(item.product_id)
             if product is not None and inventory is not None:
-                details.append((item, product, inventory))
+                variant = (
+                    ProductRepository(self.session).get_variant(product.id, item.variant_id)
+                    if item.variant_id is not None
+                    else None
+                )
+                details.append((item, product, inventory, variant))
         return details
 
 
@@ -252,7 +402,8 @@ class CheckoutService:
             product_ids = sorted(item.product_id for item in cart_items)
             locked_inventory = self.inventory.lock_many(product_ids)
             inventory_by_product = {row.product_id: row for row in locked_inventory}
-            product_by_id: dict[int, Product] = {}
+            selected_items: dict[int, tuple[Product, ProductVariant | None, Decimal]] = {}
+            quantity_by_product: dict[int, int] = {}
             subtotal = Decimal("0.00")
             for item in cart_items:
                 product = self.products.get(item.product_id)
@@ -265,14 +416,33 @@ class CheckoutService:
                     raise BusinessError(
                         "PRODUCT_NOT_AVAILABLE", "购物车中存在不可售商品", status_code=409
                     )
-                if inventory is None or inventory.quantity < item.quantity:
+                variant = None
+                if item.variant_id is not None:
+                    variant = self.products.get_variant(product.id, item.variant_id)
+                    if variant is None:
+                        raise BusinessError(
+                            "VARIANT_NOT_AVAILABLE",
+                            f"商品 {product.name} 的所选规格已不可售",
+                            status_code=409,
+                        )
+                elif self.products.list_variants(product.id):
+                    raise BusinessError(
+                        "VARIANT_REQUIRED",
+                        f"商品 {product.name} 需要重新选择规格",
+                        status_code=409,
+                    )
+                quantity_by_product[product.id] = (
+                    quantity_by_product.get(product.id, 0) + item.quantity
+                )
+                if inventory is None or inventory.quantity < quantity_by_product[product.id]:
                     raise BusinessError(
                         "INSUFFICIENT_STOCK",
                         f"商品 {product.name} 库存不足",
                         status_code=409,
                     )
-                product_by_id[product.id] = product
-                subtotal += product.current_price * item.quantity
+                unit_price = variant.price if variant is not None else product.current_price
+                selected_items[item.id] = product, variant, unit_price
+                subtotal += unit_price * item.quantity
 
             order = Order(
                 order_no=uuid4().hex,
@@ -287,16 +457,19 @@ class CheckoutService:
             self.session.add(order)
             self.session.flush()
             for item in cart_items:
-                product = product_by_id[item.product_id]
-                line_subtotal = product.current_price * item.quantity
+                product, variant, unit_price = selected_items[item.id]
+                line_subtotal = unit_price * item.quantity
                 self.session.add(
                     OrderItem(
                         order_id=order.id,
                         product_id=product.id,
+                        variant_id=variant.id if variant else None,
                         store_id=product.store_id,
                         product_name_snapshot=product.name,
                         sku_snapshot=product.sku,
-                        unit_price=product.current_price,
+                        variant_name_snapshot=variant.name if variant else None,
+                        variant_sku_snapshot=variant.sku if variant else None,
+                        unit_price=unit_price,
                         quantity=item.quantity,
                         subtotal=line_subtotal,
                     )

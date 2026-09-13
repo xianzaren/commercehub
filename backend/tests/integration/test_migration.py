@@ -20,6 +20,11 @@ def test_migration_creates_all_domain_tables(test_engine: Engine) -> None:
         "order_items",
         "payments",
         "product_prices",
+        "product_images",
+        "product_variants",
+        "favorites",
+        "product_views",
+        "search_histories",
         "audit_logs",
     } <= tables
 

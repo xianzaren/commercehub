@@ -10,6 +10,8 @@ type NavItem = { href: string; label: string };
 const navigation: Record<Role, NavItem[]> = {
   CUSTOMER: [
     { href: "/products", label: "逛商品" },
+    { href: "/favorites", label: "我的收藏" },
+    { href: "/history", label: "浏览记录" },
     { href: "/orders", label: "我的订单" },
     { href: "/profile/addresses", label: "收货地址" },
     { href: "/merchant/apply", label: "商家入驻" },
@@ -87,6 +89,7 @@ export function ShopHeader({ activePath, user: suppliedUser, onLogout }: { activ
       <nav className="shop-nav" aria-label="商城导航">
         <Link className={activePath === "/products" ? "active" : ""} href="/products">首页</Link>
         <Link href="/products#catalog">全部商品</Link>
+        <Link className={activePath === "/favorites" ? "active" : ""} href="/favorites">收藏</Link>
         <Link className={activePath.startsWith("/orders") ? "active" : ""} href="/orders">我的订单</Link>
       </nav>
       <div className="shop-actions">
@@ -104,6 +107,8 @@ export function ShopHeader({ activePath, user: suppliedUser, onLogout }: { activ
               <div className="account-menu-head"><strong>{user.email}</strong><span>{statusLabels[user.role]}</span></div>
               <Link role="menuitem" href={dashboardFor(user.role)}><UserIcon />{user.role === "CUSTOMER" ? "个人中心" : "进入工作台"}</Link>
               {user.role === "CUSTOMER" && <Link role="menuitem" href="/profile/addresses">收货地址</Link>}
+              {user.role === "CUSTOMER" && <Link role="menuitem" href="/favorites">我的收藏</Link>}
+              {user.role === "CUSTOMER" && <Link role="menuitem" href="/history">浏览记录</Link>}
               {user.role === "CUSTOMER" && <Link role="menuitem" href="/orders">我的订单</Link>}
               <button role="menuitem" type="button" onClick={logout}><LogoutIcon />退出登录</button>
             </div>

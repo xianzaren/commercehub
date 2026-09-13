@@ -77,7 +77,14 @@ class OrderItem(Base):
         CheckConstraint("unit_price > 0", name="positive_unit_price"),
         CheckConstraint("quantity > 0", name="positive_quantity"),
         CheckConstraint("subtotal > 0", name="positive_subtotal"),
-        Index("uq_order_items_order_product", "order_id", "product_id", unique=True),
+        Index(
+            "uq_order_items_order_product_variant",
+            "order_id",
+            "product_id",
+            "variant_key",
+            unique=True,
+        ),
+        Index("ix_order_items_order_id", "order_id"),
         Index("ix_order_items_store_product", "store_id", "product_id"),
     )
 
@@ -92,6 +99,16 @@ class OrderItem(Base):
         ForeignKey("products.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    variant_id: Mapped[int | None] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("product_variants.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    variant_key: Mapped[int] = mapped_column(
+        BIGINT_UNSIGNED,
+        Computed("COALESCE(variant_id, 0)", persisted=True),
+        nullable=False,
+    )
     store_id: Mapped[int] = mapped_column(
         BIGINT_UNSIGNED,
         ForeignKey("stores.id", ondelete="RESTRICT"),
@@ -99,6 +116,8 @@ class OrderItem(Base):
     )
     product_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
     sku_snapshot: Mapped[str] = mapped_column(String(64), nullable=False)
+    variant_name_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    variant_sku_snapshot: Mapped[str | None] = mapped_column(String(64), nullable=True)
     unit_price: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     quantity: Mapped[int] = mapped_column(nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(MONEY, nullable=False)

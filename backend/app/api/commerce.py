@@ -3,9 +3,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Response, status
 
-from app.api.deps import CustomerUser, DatabaseSession
+from app.api.deps import CustomerUser, DatabaseSession, OptionalCurrentUser
 from app.models.cart import Cart, CartItem
-from app.models.catalog import Inventory, Product
+from app.models.catalog import Inventory, Product, ProductVariant
 from app.models.order import Order
 from app.schemas.commerce import (
     AddressCreate,
@@ -16,20 +16,25 @@ from app.schemas.commerce import (
     CartItemUpdate,
     CartResponse,
     CheckoutRequest,
+    FavoriteStateResponse,
     OrderItemResponse,
     OrderResponse,
     PaymentRequest,
     PaymentResponse,
+    ProductImageResponse,
     ProductPage,
     ProductSearchParams,
+    ProductVariantResponse,
     PublicProductResponse,
 )
 from app.services.commerce_service import (
     AddressService,
     CartService,
     CheckoutService,
+    EngagementService,
     OrderService,
     ProductBrowseService,
+    ProductDetails,
 )
 
 product_router = APIRouter(prefix="/api/products", tags=["products"])
@@ -37,32 +42,51 @@ customer_router = APIRouter(prefix="/api", tags=["customer-commerce"])
 
 
 def public_product_response(
-    product: Product,
-    inventory: Inventory,
-    category_name: str,
-    store_name: str,
-    sales_count: int,
+    details: ProductDetails,
+    *,
+    is_favorite: bool = False,
 ) -> PublicProductResponse:
+    product = details.product
+    images = [
+        ProductImageResponse(
+            url=image.url,
+            alt_text=image.alt_text,
+            is_primary=image.is_primary,
+        )
+        for image in details.images
+    ]
+    if not images and details.primary_image_url:
+        images = [
+            ProductImageResponse(
+                url=details.primary_image_url,
+                alt_text=f"{product.name}商品图",
+                is_primary=True,
+            )
+        ]
     return PublicProductResponse(
         id=product.id,
         store_id=product.store_id,
         category_id=product.category_id,
-        category_name=category_name,
-        store_name=store_name,
+        category_name=details.category_name,
+        store_name=details.store_name,
         sku=product.sku,
         name=product.name,
         description=product.description,
         tags=product.tags,
         current_price=product.current_price,
-        inventory_quantity=inventory.quantity,
-        sales_count=sales_count,
+        inventory_quantity=details.inventory.quantity,
+        sales_count=details.sales_count,
+        images=images,
+        variants=[ProductVariantResponse.model_validate(item) for item in details.variants],
+        has_variants=details.has_variants,
+        is_favorite=is_favorite,
         created_at=product.created_at,
     )
 
 
 def cart_response(
     cart: Cart | None,
-    details: list[tuple[CartItem, Product, Inventory]],
+    details: list[tuple[CartItem, Product, Inventory, ProductVariant | None]],
 ) -> CartResponse:
     items = [
         CartItemResponse(
@@ -70,12 +94,16 @@ def cart_response(
             product_id=product.id,
             product_name=product.name,
             sku=product.sku,
-            unit_price=product.current_price,
+            variant_id=variant.id if variant is not None else None,
+            variant_name=variant.name if variant is not None else None,
+            variant_sku=variant.sku if variant is not None else None,
+            unit_price=variant.price if variant is not None else product.current_price,
             quantity=item.quantity,
             available_stock=inventory.quantity,
-            subtotal=product.current_price * item.quantity,
+            subtotal=(variant.price if variant is not None else product.current_price)
+            * item.quantity,
         )
-        for item, product, inventory in details
+        for item, product, inventory, variant in details
     ]
     return CartResponse(
         id=cart.id if cart is not None else None,
@@ -96,8 +124,7 @@ def order_response(order: Order, service: OrderService) -> OrderResponse:
         total_amount=order.total_amount,
         payment_status=order.payment_status,
         items=[
-            OrderItemResponse.model_validate(item)
-            for item in service.orders.list_items(order.id)
+            OrderItemResponse.model_validate(item) for item in service.orders.list_items(order.id)
         ],
         payments=[
             PaymentResponse.model_validate(payment)
@@ -111,6 +138,7 @@ def order_response(order: Order, service: OrderService) -> OrderResponse:
 @product_router.get("", response_model=ProductPage)
 def search_products(
     params: Annotated[ProductSearchParams, Query()],
+    user: OptionalCurrentUser,
     session: DatabaseSession,
 ) -> ProductPage:
     service = ProductBrowseService(session)
@@ -123,18 +151,90 @@ def search_products(
         offset=(params.page - 1) * params.page_size,
         limit=params.page_size,
     )
-    return ProductPage(
-        items=[public_product_response(*item) for item in products],
+    engagement = EngagementService(session)
+    favorite_ids = set(engagement.favorite_ids(user)) if user is not None else set()
+    response = ProductPage(
+        items=[
+            public_product_response(item, is_favorite=item.product.id in favorite_ids)
+            for item in products
+        ],
         page=params.page,
         page_size=params.page_size,
         total=total,
     )
+    engagement.record_search(user, params.keyword, total)
+    return response
+
+
+@product_router.get("/suggestions", response_model=list[str])
+def suggest_products(
+    keyword: Annotated[str, Query(min_length=1, max_length=100)],
+    session: DatabaseSession,
+) -> list[str]:
+    return ProductBrowseService(session).suggest(keyword)
 
 
 @product_router.get("/{product_id}", response_model=PublicProductResponse)
-def get_product(product_id: int, session: DatabaseSession) -> PublicProductResponse:
-    product = ProductBrowseService(session).get_active_details(product_id)
-    return public_product_response(*product)
+def get_product(
+    product_id: int,
+    user: OptionalCurrentUser,
+    session: DatabaseSession,
+) -> PublicProductResponse:
+    details = ProductBrowseService(session).get_active_details(product_id)
+    engagement = EngagementService(session)
+    is_favorite = user is not None and product_id in set(engagement.favorite_ids(user))
+    response = public_product_response(details, is_favorite=is_favorite)
+    engagement.record_view(user, product_id)
+    return response
+
+
+@customer_router.get("/favorites/ids", response_model=list[int])
+def list_favorite_ids(user: CustomerUser, session: DatabaseSession) -> list[int]:
+    return EngagementService(session).favorite_ids(user)
+
+
+@customer_router.get("/favorites", response_model=list[PublicProductResponse])
+def list_favorites(
+    user: CustomerUser,
+    session: DatabaseSession,
+) -> list[PublicProductResponse]:
+    return [
+        public_product_response(item, is_favorite=True)
+        for item in EngagementService(session).favorites(user)
+    ]
+
+
+@customer_router.post("/favorites/{product_id}", response_model=FavoriteStateResponse)
+def add_favorite(
+    product_id: int,
+    user: CustomerUser,
+    session: DatabaseSession,
+) -> FavoriteStateResponse:
+    EngagementService(session).add_favorite(user, product_id)
+    return FavoriteStateResponse(product_id=product_id, is_favorite=True)
+
+
+@customer_router.delete("/favorites/{product_id}", response_model=FavoriteStateResponse)
+def delete_favorite(
+    product_id: int,
+    user: CustomerUser,
+    session: DatabaseSession,
+) -> FavoriteStateResponse:
+    EngagementService(session).delete_favorite(user, product_id)
+    return FavoriteStateResponse(product_id=product_id, is_favorite=False)
+
+
+@customer_router.get("/history/views", response_model=list[PublicProductResponse])
+def list_view_history(
+    user: CustomerUser,
+    session: DatabaseSession,
+) -> list[PublicProductResponse]:
+    engagement = EngagementService(session)
+    favorite_ids = set(engagement.favorite_ids(user))
+    return [
+        public_product_response(item, is_favorite=item.product.id in favorite_ids)
+        for item in engagement.viewed_products(user)
+    ]
 
 
 @customer_router.get("/cart", response_model=CartResponse)
@@ -153,7 +253,7 @@ def add_cart_item(
     session: DatabaseSession,
 ) -> CartResponse:
     service = CartService(session)
-    service.add_item(user, payload.product_id, payload.quantity)
+    service.add_item(user, payload.product_id, payload.quantity, payload.variant_id)
     return cart_response(*service.get(user))
 
 

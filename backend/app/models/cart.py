@@ -40,7 +40,14 @@ class CartItem(TimestampMixin, Base):
     __tablename__ = "cart_items"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="positive_quantity"),
-        Index("uq_cart_items_cart_product", "cart_id", "product_id", unique=True),
+        Index(
+            "uq_cart_items_cart_product_variant",
+            "cart_id",
+            "product_id",
+            "variant_key",
+            unique=True,
+        ),
+        Index("ix_cart_items_cart_id", "cart_id"),
         Index("ix_cart_items_product", "product_id"),
     )
 
@@ -53,6 +60,16 @@ class CartItem(TimestampMixin, Base):
     product_id: Mapped[int] = mapped_column(
         BIGINT_UNSIGNED,
         ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    variant_id: Mapped[int | None] = mapped_column(
+        BIGINT_UNSIGNED,
+        ForeignKey("product_variants.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    variant_key: Mapped[int] = mapped_column(
+        BIGINT_UNSIGNED,
+        Computed("COALESCE(variant_id, 0)", persisted=True),
         nullable=False,
     )
     quantity: Mapped[int] = mapped_column(nullable=False)

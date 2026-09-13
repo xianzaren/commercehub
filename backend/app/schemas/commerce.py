@@ -8,6 +8,22 @@ from app.models.enums import OrderPaymentStatus, OrderStatus, PaymentMethod, Pay
 from app.schemas.pagination import Page
 
 
+class ProductImageResponse(BaseModel):
+    url: str
+    alt_text: str
+    is_primary: bool
+
+
+class ProductVariantResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sku: str
+    name: str
+    attributes: dict[str, str]
+    price: Decimal
+
+
 class PublicProductResponse(BaseModel):
     id: int
     store_id: int
@@ -21,6 +37,10 @@ class PublicProductResponse(BaseModel):
     current_price: Decimal
     inventory_quantity: int
     sales_count: int
+    images: list[ProductImageResponse]
+    variants: list[ProductVariantResponse]
+    has_variants: bool
+    is_favorite: bool = False
     created_at: datetime
 
 
@@ -49,6 +69,7 @@ ProductPage = Page[PublicProductResponse]
 
 class CartItemCreate(BaseModel):
     product_id: int = Field(gt=0)
+    variant_id: int | None = Field(default=None, gt=0)
     quantity: int = Field(gt=0, le=10_000)
 
 
@@ -61,6 +82,9 @@ class CartItemResponse(BaseModel):
     product_id: int
     product_name: str
     sku: str
+    variant_id: int | None
+    variant_name: str | None
+    variant_sku: str | None
     unit_price: Decimal
     quantity: int
     available_stock: int
@@ -143,9 +167,16 @@ class OrderItemResponse(BaseModel):
     store_id: int
     product_name_snapshot: str
     sku_snapshot: str
+    variant_name_snapshot: str | None
+    variant_sku_snapshot: str | None
     unit_price: Decimal
     quantity: int
     subtotal: Decimal
+
+
+class FavoriteStateResponse(BaseModel):
+    product_id: int
+    is_favorite: bool
 
 
 class PaymentResponse(BaseModel):

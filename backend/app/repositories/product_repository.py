@@ -1,9 +1,16 @@
 from decimal import Decimal
 
-from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy import case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Category, Inventory, Product, ProductPrice
+from app.models.catalog import (
+    Category,
+    Inventory,
+    Product,
+    ProductImage,
+    ProductPrice,
+    ProductVariant,
+)
 from app.models.enums import OrderStatus
 from app.models.order import Order, OrderItem
 from app.models.user import Store
@@ -76,6 +83,60 @@ class ProductRepository:
         )
         return list(self.session.scalars(statement))
 
+    def list_images(self, product_id: int) -> list[ProductImage]:
+        statement = (
+            select(ProductImage)
+            .where(ProductImage.product_id == product_id)
+            .order_by(ProductImage.is_primary.desc(), ProductImage.sort_order, ProductImage.id)
+        )
+        return list(self.session.scalars(statement))
+
+    def list_variants(self, product_id: int) -> list[ProductVariant]:
+        statement = (
+            select(ProductVariant)
+            .where(
+                ProductVariant.product_id == product_id,
+                ProductVariant.status == "ACTIVE",
+            )
+            .order_by(ProductVariant.sort_order, ProductVariant.id)
+        )
+        return list(self.session.scalars(statement))
+
+    def get_variant(self, product_id: int, variant_id: int) -> ProductVariant | None:
+        statement = select(ProductVariant).where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == product_id,
+            ProductVariant.status == "ACTIVE",
+        )
+        return self.session.scalar(statement)
+
+    def suggest(self, keyword: str, *, limit: int = 8) -> list[str]:
+        normalized = keyword.strip().lower()
+        if not normalized:
+            return []
+        escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        searchable_name = func.lower(Product.name)
+        statement = (
+            select(Product.name)
+            .join(Store, Product.store_id == Store.id)
+            .where(
+                Product.status == "ACTIVE",
+                Store.status == "ACTIVE",
+                searchable_name.like(f"%{escaped}%", escape="\\"),
+            )
+            .order_by(
+                case(
+                    (searchable_name == normalized, 3),
+                    (searchable_name.like(f"{escaped}%", escape="\\"), 2),
+                    else_=1,
+                ).desc(),
+                Product.created_at.desc(),
+                Product.id.desc(),
+            )
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))
+
     def search_active(
         self,
         *,
@@ -86,11 +147,12 @@ class ProductRepository:
         sort: str,
         offset: int,
         limit: int,
-    ) -> tuple[list[tuple[Product, Inventory, str, str, int]], int]:
+    ) -> tuple[list[tuple[Product, Inventory, str, str, int, str | None, bool]], int]:
         conditions = [Product.status == "ACTIVE", Store.status == "ACTIVE"]
         relevance = None
         normalized_keyword = keyword.strip().lower() if keyword else ""
         if normalized_keyword:
+
             def escape_like(value: str) -> str:
                 return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -134,9 +196,7 @@ class ProductRepository:
             "oldest": (Product.created_at.asc(), Product.id.asc()),
         }[sort]
         order_by = (
-            (relevance.desc(), *secondary_order_by)
-            if relevance is not None
-            else secondary_order_by
+            (relevance.desc(), *secondary_order_by) if relevance is not None else secondary_order_by
         )
         sales_totals = (
             select(
@@ -148,6 +208,20 @@ class ProductRepository:
             .group_by(OrderItem.product_id)
             .subquery()
         )
+        primary_image_url = (
+            select(ProductImage.url)
+            .where(ProductImage.product_id == Product.id)
+            .order_by(ProductImage.is_primary.desc(), ProductImage.sort_order, ProductImage.id)
+            .limit(1)
+            .correlate(Product)
+            .scalar_subquery()
+        )
+        has_variants = exists(
+            select(ProductVariant.id).where(
+                ProductVariant.product_id == Product.id,
+                ProductVariant.status == "ACTIVE",
+            )
+        )
         statement = (
             select(
                 Product,
@@ -155,6 +229,8 @@ class ProductRepository:
                 Category.name,
                 Store.name,
                 func.coalesce(sales_totals.c.sales_count, 0),
+                primary_image_url,
+                has_variants,
             )
             .join(Store, Product.store_id == Store.id)
             .join(Category, Product.category_id == Category.id)
@@ -172,10 +248,24 @@ class ProductRepository:
             .where(*conditions)
         )
         rows = [
-            (product, inventory, category_name, store_name, int(sales_count))
-            for product, inventory, category_name, store_name, sales_count in self.session.execute(
-                statement
+            (
+                product,
+                inventory,
+                category_name,
+                store_name,
+                int(sales_count),
+                image_url,
+                bool(product_has_variants),
             )
+            for (
+                product,
+                inventory,
+                category_name,
+                store_name,
+                sales_count,
+                image_url,
+                product_has_variants,
+            ) in self.session.execute(statement)
         ]
         return rows, int(self.session.scalar(count_statement) or 0)
 
