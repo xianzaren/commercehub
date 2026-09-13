@@ -5,7 +5,7 @@ import "./styles.css";
 
 export const metadata: Metadata = {
   title: { default: "CommerceHub", template: "%s · CommerceHub" },
-  description: "多角色电商交易、库存和运营管理平台",
+  description: "发现精选好物，轻松下单并随时查看订单进度。",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

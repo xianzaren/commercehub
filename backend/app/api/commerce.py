@@ -36,16 +36,26 @@ product_router = APIRouter(prefix="/api/products", tags=["products"])
 customer_router = APIRouter(prefix="/api", tags=["customer-commerce"])
 
 
-def public_product_response(product: Product, inventory: Inventory) -> PublicProductResponse:
+def public_product_response(
+    product: Product,
+    inventory: Inventory,
+    category_name: str,
+    store_name: str,
+    sales_count: int,
+) -> PublicProductResponse:
     return PublicProductResponse(
         id=product.id,
         store_id=product.store_id,
         category_id=product.category_id,
+        category_name=category_name,
+        store_name=store_name,
         sku=product.sku,
         name=product.name,
         description=product.description,
+        tags=product.tags,
         current_price=product.current_price,
         inventory_quantity=inventory.quantity,
+        sales_count=sales_count,
         created_at=product.created_at,
     )
 
@@ -114,7 +124,7 @@ def search_products(
         limit=params.page_size,
     )
     return ProductPage(
-        items=[public_product_response(product, inventory) for product, inventory in products],
+        items=[public_product_response(*item) for item in products],
         page=params.page,
         page_size=params.page_size,
         total=total,
@@ -123,8 +133,8 @@ def search_products(
 
 @product_router.get("/{product_id}", response_model=PublicProductResponse)
 def get_product(product_id: int, session: DatabaseSession) -> PublicProductResponse:
-    product, inventory = ProductBrowseService(session).get_active(product_id)
-    return public_product_response(product, inventory)
+    product = ProductBrowseService(session).get_active_details(product_id)
+    return public_product_response(*product)
 
 
 @customer_router.get("/cart", response_model=CartResponse)

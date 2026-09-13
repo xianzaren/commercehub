@@ -45,17 +45,17 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
       <section className="auth-story">
         <Link className="brand" href="/products"><span className="brand-mark">CH</span><span>CommerceHub</span></Link>
         <div>
-          <p className="eyebrow">TRANSACTION CONTROL SYSTEM</p>
-          <h1>一套界面，连接用户、商家与平台。</h1>
-          <p>从商品、库存到订单和审计，每一步都由真实 MySQL 事务支持。</p>
+          <p className="eyebrow">欢迎来到 CommerceHub</p>
+          <h1>发现好物，享受简单自在的购物体验。</h1>
+          <p>精选日常好物，轻松管理订单、收货地址和配送进度。</p>
         </div>
-        <div className="tech-strip"><span>FastAPI</span><span>MySQL 8.4</span><span>Next.js</span></div>
+        <div className="tech-strip"><span>精选好物</span><span>便捷下单</span><span>订单随时查</span></div>
       </section>
       <section className="auth-form-panel">
         <form className="form-card" onSubmit={submit}>
-          <p className="eyebrow">{mode === "login" ? "WELCOME BACK" : "CREATE ACCOUNT"}</p>
-          <h2>{mode === "login" ? "登录工作台" : "注册用户账户"}</h2>
-          <p>{mode === "login" ? "系统会根据账户角色打开对应工作区。" : "新账户默认拥有 Customer 权限。"}</p>
+          <p className="eyebrow">{mode === "login" ? "欢迎回来" : "加入我们"}</p>
+          <h2>{mode === "login" ? "登录账户" : "创建新账户"}</h2>
+          <p>{mode === "login" ? "登录后继续选购，并查看你的订单。" : "注册后即可收藏心仪好物并开始购物。"}</p>
           {message && <div className="notice-box error" role="alert">{message}</div>}
           <label>邮箱<input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>
           <label>密码<input type="password" required minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 位，包含字母和数字" /></label>

@@ -162,6 +162,27 @@ def prepare_cart(
 
 
 @pytest.mark.integration
+def test_product_search_filters_by_any_character_and_orders_by_relevance(
+    api_client: TestClient,
+    test_engine: Engine,
+) -> None:
+    strongest_id, _ = create_catalog(test_engine, name="翾翯翱主题灯")
+    medium_id, _ = create_catalog(test_engine, name="翾翯桌垫")
+    weakest_id, _ = create_catalog(test_engine, name="翾杯")
+
+    response = api_client.get("/api/products", params={"keyword": "翾翯翱"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert [item["id"] for item in payload["items"]] == [strongest_id, medium_id, weakest_id]
+
+    no_match = api_client.get("/api/products", params={"keyword": "龘靐齉"})
+    assert no_match.status_code == 200
+    assert no_match.json()["total"] == 0
+
+
+@pytest.mark.integration
 def test_customer_browse_cart_checkout_and_idempotent_payment(
     api_client: TestClient,
     test_engine: Engine,
@@ -182,7 +203,13 @@ def test_customer_browse_cart_checkout_and_idempotent_payment(
     assert search.status_code == 200
     assert search.json()["total"] == 1
     assert search.json()["items"][0]["id"] == product_id
-    assert api_client.get(f"/api/products/{product_id}").status_code == 200
+    assert search.json()["items"][0]["category_name"].startswith("Category ")
+    assert search.json()["items"][0]["store_name"].startswith("Store ")
+    assert search.json()["items"][0]["tags"] == []
+    assert search.json()["items"][0]["sales_count"] == 0
+    product_detail = api_client.get(f"/api/products/{product_id}")
+    assert product_detail.status_code == 200
+    assert product_detail.json()["sales_count"] == 0
 
     cart = api_client.post(
         "/api/cart/items",
@@ -224,6 +251,7 @@ def test_customer_browse_cart_checkout_and_idempotent_payment(
     assert order["status"] == "PENDING_PAYMENT"
     assert order["items"][0]["product_name_snapshot"] == "Searchable Mechanical Keyboard"
     assert order["payments"][0]["status"] == "PENDING"
+    assert api_client.get(f"/api/products/{product_id}").json()["sales_count"] == 0
 
     payment_payload = {
         "method": "MOCK_CARD",
@@ -244,6 +272,7 @@ def test_customer_browse_cart_checkout_and_idempotent_payment(
     assert paid.status_code == 200
     assert paid.json()["status"] == "PAID"
     assert repeated.json()["id"] == paid.json()["id"]
+    assert api_client.get(f"/api/products/{product_id}").json()["sales_count"] == 2
 
     with Session(test_engine) as session:
         inventory = session.get(Inventory, product_id)

@@ -28,6 +28,7 @@ class ProductCreate(BaseModel):
     sku: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=5)
     current_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
 
     @field_validator("sku")
@@ -35,23 +36,42 @@ class ProductCreate(BaseModel):
     def normalize_sku(cls, value: str) -> str:
         return value.strip().upper()
 
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, values: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if any(len(value) > 16 for value in cleaned):
+            raise ValueError("each tag must not exceed 16 characters")
+        return cleaned
+
 
 class ProductUpdate(BaseModel):
     category_id: int | None = Field(default=None, gt=0)
     sku: str | None = Field(default=None, min_length=1, max_length=64)
     name: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=5000)
+    tags: list[str] | None = Field(default=None, max_length=5)
 
     @field_validator("sku")
     @classmethod
     def normalize_sku(cls, value: str | None) -> str | None:
         return value.strip().upper() if value is not None else None
 
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        cleaned = list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if any(len(value) > 16 for value in cleaned):
+            raise ValueError("each tag must not exceed 16 characters")
+        return cleaned
+
     @model_validator(mode="after")
     def validate_patch(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("at least one field must be provided")
-        for field in ("category_id", "sku", "name"):
+        for field in ("category_id", "sku", "name", "tags"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")
         return self
@@ -91,6 +111,7 @@ class ProductResponse(BaseModel):
     sku: str
     name: str
     description: str | None
+    tags: list[str]
     current_price: Decimal
     status: ProductStatus
     inventory_quantity: int

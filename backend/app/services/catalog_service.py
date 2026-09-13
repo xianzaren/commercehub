@@ -61,6 +61,7 @@ class CatalogService:
         sku: str,
         name: str,
         description: str | None,
+        tags: list[str],
         current_price: Decimal,
     ) -> Product:
         store = self._active_store(merchant)
@@ -73,6 +74,7 @@ class CatalogService:
             sku=sku,
             name=name.strip(),
             description=description.strip() if description else None,
+            tags=tags,
             current_price=current_price,
             status=ProductStatus.DRAFT,
         )

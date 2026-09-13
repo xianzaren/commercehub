@@ -12,11 +12,15 @@ class PublicProductResponse(BaseModel):
     id: int
     store_id: int
     category_id: int
+    category_name: str
+    store_name: str
     sku: str
     name: str
     description: str | None
+    tags: list[str]
     current_price: Decimal
     inventory_quantity: int
+    sales_count: int
     created_at: datetime
 
 

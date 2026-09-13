@@ -32,6 +32,7 @@ def product_response(product: Product, service: CatalogService) -> ProductRespon
         sku=product.sku,
         name=product.name,
         description=product.description,
+        tags=product.tags,
         current_price=product.current_price,
         status=product.status,
         inventory_quantity=inventory.quantity,

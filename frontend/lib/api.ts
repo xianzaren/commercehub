@@ -19,12 +19,16 @@ export type Page<T> = {
 export type Product = {
   id: number;
   store_id: number;
+  store_name?: string;
   category_id: number;
+  category_name?: string;
   sku: string;
   name: string;
   description?: string | null;
+  tags: string[];
   current_price: string;
   inventory_quantity: number;
+  sales_count: number;
   status?: string;
   created_at?: string;
 };

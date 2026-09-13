@@ -126,12 +126,14 @@ def create_store_and_product(
             "sku": f"{prefix}-{uuid4().hex[:8]}",
             "name": f"{prefix} Product",
             "description": "Phase 3 test product",
+            "tags": ["热卖", "包邮"],
             "current_price": "99.90",
         },
     )
     assert product.status_code == 201
     assert product.json()["status"] == "DRAFT"
     assert product.json()["inventory_quantity"] == 0
+    assert product.json()["tags"] == ["热卖", "包邮"]
     return product.json()["id"]
 
 

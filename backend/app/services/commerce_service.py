@@ -23,7 +23,7 @@ from app.models.user import User
 from app.repositories.commerce_repository import AddressRepository, CartRepository, OrderRepository
 from app.repositories.inventory_repository import InventoryRepository
 from app.repositories.merchant_repository import StoreRepository
-from app.repositories.product_repository import ProductRepository
+from app.repositories.product_repository import CategoryRepository, ProductRepository
 
 
 def utcnow() -> datetime:
@@ -33,6 +33,7 @@ def utcnow() -> datetime:
 class ProductBrowseService:
     def __init__(self, session: Session) -> None:
         self.products = ProductRepository(session)
+        self.categories = CategoryRepository(session)
         self.inventory = InventoryRepository(session)
         self.stores = StoreRepository(session)
 
@@ -46,8 +47,8 @@ class ProductBrowseService:
         sort: str,
         offset: int,
         limit: int,
-    ) -> tuple[list[tuple[Product, Inventory]], int]:
-        products, total = self.products.search_active(
+    ) -> tuple[list[tuple[Product, Inventory, str, str, int]], int]:
+        return self.products.search_active(
             keyword=keyword,
             category_id=category_id,
             min_price=min_price,
@@ -56,12 +57,6 @@ class ProductBrowseService:
             offset=offset,
             limit=limit,
         )
-        result = []
-        for product in products:
-            inventory = self.inventory.get(product.id)
-            if inventory is not None:
-                result.append((product, inventory))
-        return result, total
 
     def get_active(self, product_id: int) -> tuple[Product, Inventory]:
         product = self.products.get(product_id)
@@ -74,6 +69,14 @@ class ProductBrowseService:
         if inventory is None:
             raise BusinessError("INVENTORY_NOT_FOUND", "库存记录不存在", status_code=409)
         return product, inventory
+
+    def get_active_details(self, product_id: int) -> tuple[Product, Inventory, str, str, int]:
+        product, inventory = self.get_active(product_id)
+        category = self.categories.get(product.category_id)
+        store = self.stores.get(product.store_id)
+        if category is None or store is None:
+            raise BusinessError("PRODUCT_NOT_FOUND", "商品不存在或不可售", status_code=404)
+        return product, inventory, category.name, store.name, self.products.sales_count(product.id)
 
 
 class CartService:
