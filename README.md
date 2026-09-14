@@ -4,6 +4,16 @@
 
 CommerceHub is a locally runnable, multi-role shopping platform with dedicated interfaces for customers, merchants, and administrators. It includes a Chinese storefront, demo products, and demo accounts for functional evaluation, coursework demonstrations, and portfolio use.
 
+## Technology stack
+
+| Layer | Technology | Responsibility |
+|---|---|---|
+| Frontend | Next.js 16, React 19, TypeScript | Storefront and customer, merchant, and administrator workflows |
+| Backend | FastAPI, SQLAlchemy 2, Pydantic | REST API, business services, authentication, and RBAC |
+| Database | MySQL 8, Alembic | Transactional data, migrations, inventory, orders, and audit records |
+| Delivery | Docker, Docker Compose | Reproducible local full-stack environment and utility profiles |
+| Quality | pytest, Ruff, GitHub Actions | Backend tests, coverage gate, linting, type checking, and production build |
+
 ## Features
 
 ### Customers
@@ -57,6 +67,7 @@ CommerceHub is a locally runnable, multi-role shopping platform with dedicated i
 ```
 
 Backend dependencies are declared in `backend/pyproject.toml`; frontend dependencies are declared in `frontend/package.json`.
+The detailed requirements and design rationale remain in [PROJECT_SPEC.md](PROJECT_SPEC.md); this README is the quick entry point for running and reviewing the implemented system.
 
 ## Start the application
 
@@ -93,7 +104,9 @@ A normal shutdown does not erase persisted data.
 
 ## Demo accounts
 
-All demo accounts use the password `Demo1234!`.
+These credentials are seeded exclusively for the local demonstration environment.
+Never deploy them or reuse their password in a public or production service. All
+demo accounts use the password `Demo1234!`.
 
 | Role | Account |
 |---|---|
