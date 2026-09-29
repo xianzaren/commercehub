@@ -1,3 +1,3 @@
-import { MerchantPage } from "../../../components/merchant-pages";
+import { MerchantAnalyticsDashboard } from "../../../components/merchant-analytics";
 
-export default function Page() { return <MerchantPage view="analytics" />; }
+export default function Page() { return <MerchantAnalyticsDashboard />; }

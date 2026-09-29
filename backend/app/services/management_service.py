@@ -113,7 +113,8 @@ class MerchantManagementService:
 
     def analytics_summary(self, merchant: Merchant) -> dict[str, object]:
         store = self._store(merchant)
-        now = utcnow()
+        # Stored timestamps are UTC; merchant calendar days use Beijing time.
+        now = utcnow() + timedelta(hours=8)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today_start + timedelta(days=1)
         month_start = today_start.replace(day=1)
@@ -124,10 +125,18 @@ class MerchantManagementService:
         count, total, average = self.management.sales_summary(store.id)
         return {
             "today_revenue": as_decimal(
-                self.management.revenue_between(today_start, tomorrow, store_id=store.id)
+                self.management.revenue_between(
+                    today_start - timedelta(hours=8),
+                    tomorrow - timedelta(hours=8),
+                    store_id=store.id,
+                )
             ),
             "month_revenue": as_decimal(
-                self.management.revenue_between(month_start, next_month, store_id=store.id)
+                self.management.revenue_between(
+                    month_start - timedelta(hours=8),
+                    next_month - timedelta(hours=8),
+                    store_id=store.id,
+                )
             ),
             "total_revenue": as_decimal(total),
             "paid_order_count": count,
@@ -143,9 +152,7 @@ class MerchantManagementService:
                 "quantity_sold": int(quantity),
                 "revenue": as_decimal(revenue),
             }
-            for product_id, name, quantity, revenue in self.management.top_products(
-                store.id, limit
-            )
+            for product_id, name, quantity, revenue in self.management.top_products(store.id, limit)
         ]
 
     def low_stock(

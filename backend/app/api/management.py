@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Query
 
@@ -6,6 +6,7 @@ from app.api.deps import ActiveMerchant, AdminUser, DatabaseSession, MerchantUse
 from app.models.enums import MerchantStatus, OrderStatus, ProductStatus, UserRole, UserStatus
 from app.models.order import Order
 from app.repositories.commerce_repository import OrderRepository
+from app.schemas.analytics import MerchantDashboard
 from app.schemas.commerce import OrderItemResponse, PaymentResponse
 from app.schemas.management import (
     AdminMerchantPage,
@@ -29,6 +30,7 @@ from app.schemas.management import (
     UserAdminResponse,
     UserStatusUpdate,
 )
+from app.services.analytics_service import AnalyticsService
 from app.services.management_service import AdminManagementService, MerchantManagementService
 
 merchant_management_router = APIRouter(prefix="/api/merchant", tags=["merchant-management"])
@@ -46,9 +48,7 @@ def managed_order_response(order: Order, orders: OrderRepository) -> ManagedOrde
         subtotal=order.subtotal,
         total_amount=order.total_amount,
         payment_status=order.payment_status,
-        items=[
-            OrderItemResponse.model_validate(item) for item in orders.list_items(order.id)
-        ],
+        items=[OrderItemResponse.model_validate(item) for item in orders.list_items(order.id)],
         payments=[
             PaymentResponse.model_validate(payment) for payment in orders.list_payments(order.id)
         ],
@@ -136,6 +136,19 @@ def merchant_top_products(
 ) -> list[TopProductResponse]:
     rows = MerchantManagementService(session).top_products(merchant, limit)
     return [TopProductResponse.model_validate(row) for row in rows]
+
+
+@merchant_management_router.get("/analytics/dashboard", response_model=MerchantDashboard)
+def merchant_dashboard(
+    merchant: ActiveMerchant,
+    session: DatabaseSession,
+    days: int = Query(default=30, ge=1, le=90),
+    end_date: date | None = None,
+    product_id: int | None = Query(default=None, gt=0),
+) -> MerchantDashboard:
+    return MerchantDashboard.model_validate(
+        AnalyticsService(session).dashboard(merchant, days, end_date, product_id)
+    )
 
 
 @merchant_management_router.get("/analytics/low-stock", response_model=LowStockPage)

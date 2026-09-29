@@ -123,7 +123,15 @@ class AddressUpdate(BaseModel):
     def validate_patch(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("at least one field must be provided")
-        required = {"recipient_name", "phone", "province", "city", "district", "detail"}
+        required = {
+            "recipient_name",
+            "phone",
+            "province",
+            "city",
+            "district",
+            "detail",
+            "is_default",
+        }
         for field in required & self.model_fields_set:
             if getattr(self, field) is None:
                 raise ValueError(f"{field} must not be null")

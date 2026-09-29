@@ -201,12 +201,19 @@ def test_customer_browse_cart_checkout_and_idempotent_payment(
         price=Decimal("49.90"),
         name="Searchable Mechanical Keyboard",
     )
+    with Session(test_engine) as session:
+        category_id = session.get(Product, product_id).category_id
     _, email, password = create_customer(test_engine)
     token = login(api_client, email, password)
 
     search = api_client.get(
         "/api/products",
-        params={"keyword": "Mechanical", "min_price": "40", "max_price": "60"},
+        params={
+            "keyword": "Mechanical",
+            "min_price": "40",
+            "max_price": "60",
+            "category_id": category_id,
+        },
     )
     assert search.status_code == 200
     assert search.json()["total"] == 1

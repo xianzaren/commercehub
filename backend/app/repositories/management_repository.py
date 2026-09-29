@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
 from app.models.catalog import Inventory, Product
-from app.models.enums import OrderPaymentStatus, OrderStatus, ProductStatus
-from app.models.order import Order, OrderItem
+from app.models.enums import OrderPaymentStatus, OrderStatus, PaymentStatus, ProductStatus
+from app.models.order import Order, OrderItem, Payment
 from app.models.user import Merchant, Store, User
 
 PAID_ORDER_STATUSES = (
@@ -63,9 +63,7 @@ class ManagementRepository:
             .limit(limit)
         )
         count_statement = select(func.count(Merchant.id)).where(*conditions)
-        return list(self.session.scalars(statement)), int(
-            self.session.scalar(count_statement) or 0
-        )
+        return list(self.session.scalars(statement)), int(self.session.scalar(count_statement) or 0)
 
     def list_stores(self, *, offset: int, limit: int) -> tuple[list[Store], int]:
         statement = (
@@ -151,30 +149,34 @@ class ManagementRepository:
         conditions = [
             Order.payment_status == OrderPaymentStatus.PAID,
             Order.status.in_(PAID_ORDER_STATUSES),
-            Order.created_at >= start,
-            Order.created_at < end,
+            Payment.status == PaymentStatus.PAID,
+            Payment.paid_at >= start,
+            Payment.paid_at < end,
         ]
         if store_id is not None:
             conditions.append(Order.store_id == store_id)
         return self.session.scalar(
-            select(func.coalesce(func.sum(Order.total_amount), 0)).where(*conditions)
+            select(func.coalesce(func.sum(Order.total_amount), 0))
+            .join(Payment, Payment.order_id == Order.id)
+            .where(*conditions)
         )
 
     def top_products(self, store_id: int, limit: int) -> list[tuple[int, str, int, object]]:
         statement = (
             select(
                 OrderItem.product_id,
-                OrderItem.product_name_snapshot,
+                Product.name,
                 func.sum(OrderItem.quantity).label("quantity_sold"),
                 func.sum(OrderItem.subtotal).label("revenue"),
             )
             .join(Order, Order.id == OrderItem.order_id)
+            .join(Product, Product.id == OrderItem.product_id)
             .where(
                 Order.store_id == store_id,
                 Order.payment_status == OrderPaymentStatus.PAID,
                 Order.status.in_(PAID_ORDER_STATUSES),
             )
-            .group_by(OrderItem.product_id, OrderItem.product_name_snapshot)
+            .group_by(OrderItem.product_id, Product.name)
             .order_by(func.sum(OrderItem.quantity).desc(), OrderItem.product_id)
             .limit(limit)
         )
