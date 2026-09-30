@@ -1,11 +1,11 @@
 from collections.abc import Iterator
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Engine, inspect
 from sqlalchemy.engine import make_url
 
-from alembic import command
-from alembic.config import Config
 from app.core.config import get_settings
 from app.db.session import build_engine
 
